@@ -56,16 +56,20 @@ foreach($msGraphResource in $msGraphResources){
             `"resource`": `"$($msgraphResource.resource)`",
             `"version`": `"$($msgraphResource.version)`",
             `"category`": `"$($msgraphResource.category ? $msgraphResource.category : "configuration")`",
-            `"expandAttributes`": `"$($msgraphResource.expandAttributes ? $msgraphResource.expandAttributes: "[]")`",
-            `"transformRulesCreate`": `"$($msgraphResource.transformRulesCreate ? $msgraphResource.transformRulesCreate: "[]")`",
-            `"transformRulesPatch`": `"$($msgraphResource.transformRulesPatch ? $msgraphResource.transformRulesPatch: "[]")`",
+            `"expandAttributes`": [$($msgraphResource.expandAttributes ? ($msgraphResource.expandAttributes | ConvertTo-Json): "")],
+            `"transformRulesCreate`": [$($msgraphResource.transformRulesCreate ? ($msgraphResource.transformRulesCreate | ConvertTo-Json) : "")],
+            `"transformRulesPatch`": [$($msgraphResource.transformRulesPatch ? ($msgraphResource.transformRulesPatch | ConvertTo-Json): "")],
             `"nameAttribute`": `"$($msgraphResource.nameAttribute ? $msgraphResource.nameAttribute : "displayName")`"
           }
 "@
-
-        $newMsGraphResource = New-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'msGraphResource' -DocumentBody $msGraphResourceCreated -PartitionKey $id   
-        $msGraphResourceDbId = $newMsGraphResource.id
-        $newMsGraphResources++
+        try{
+            $newMsGraphResource = New-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'msGraphResource' -DocumentBody $msGraphResourceCreated -PartitionKey $id   
+            $msGraphResourceDbId = $newMsGraphResource.id
+            $newMsGraphResources++
+        }catch{
+            Write-Error "Unable to create object in db"
+            Write-Host $msGraphResourceCreated
+        }
     }
 
     foreach($configurationType in $msGraphResource.configurationTypes){
