@@ -1,38 +1,37 @@
 using namespace System.Net
 
-param($Payload)
+param($payload)
 
 ##### Variables
-
-$TenantId = $Payload.TenantId
-$SecretName = $Payload.AppId
-$KeyVaultName = $($env:KeyVaultName)
-$API = "https://graph.microsoft.com"
+$tenantId = $payload.TenantId
+$secretName = $payload.AppId
+$keyVaultName = $($env:KeyVaultName)
+$api = "https://graph.microsoft.com"
 
 # test Keyvault
 
-if (!$KeyVaultName) {
+if (!$keyVaultName) {
     Write-Host "keyvault name undefined";
     return
 }
 else {
-    Write-Host "KeyVault: $KeyVaultName";
+    Write-Host "KeyVault: $keyVaultName";
 }
 
 
-Write-Host "Getting secret: $SecretName from key vault: $KeyVaultName"
+Write-Host "Getting secret: $secretName from key vault: $keyVaultName"
 
 try {
-    $secret = Get-AzKeyVaultSecret -VaultName $KeyVaultName -SecretName $SecretName -AsPlainText
+    $secret = Get-AzKeyVaultSecret -VaultName $keyVaultName -SecretName $secretName -AsPlainText
     
     try {
         # Get AAD Token
-        $Response = Invoke-RestMethod -Uri https://login.microsoftonline.com/$($TenantId)/oauth2/token `
+        $response = Invoke-RestMethod -Uri https://login.microsoftonline.com/$($tenantId)/oauth2/token `
             -Method Post `
-            -Body "grant_type=client_credentials&client_id=$SecretName&client_secret=$secret&resource=$API"
+            -Body "grant_type=client_credentials&client_id=$SecretName&client_secret=$secret&resource=$api"
 
-        $Token = @{token_type = $Response.token_type; access_token = $Response.access_token }
-        Write-Host "Token found $($Token.access_token)"
+        $token = @{token_type = $Response.token_type; access_token = $response.access_token }
+        Write-Host "Token found"
     }
     catch {
         Return 'unable to generate token'
@@ -44,4 +43,4 @@ catch {
     Write-Host $Error[0]
 }
 
-return $Token
+return $token

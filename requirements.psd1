@@ -6,4 +6,6 @@
     # To use the Az module in your function app, please uncomment the line below.
     # 'Az' = '8.*'
     'CosmosDB' = '4.*'
+    'Az.KeyVault' = '4.*'
+    'Microsoft.Graph.Authentication' = '0.*'
 }
