@@ -1,0 +1,7 @@
+{
+    "bindings": [{
+        "name": "configurationVersionData",
+        "type": "activityTrigger",
+        "direction": "in"
+    }]
+}

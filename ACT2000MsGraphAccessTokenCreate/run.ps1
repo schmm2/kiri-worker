@@ -2,6 +2,8 @@ using namespace System.Net
 
 param($payload)
 
+Write-Host $payload
+
 ##### Variables
 $tenantId = $payload.TenantId
 $secretName = $payload.AppId
@@ -22,7 +24,7 @@ else {
 Write-Host "Getting secret: $secretName from key vault: $keyVaultName"
 
 try {
-    $secret = Get-AzKeyVaultSecret -VaultName $keyVaultName -SecretName $secretName -AsPlainText
+    $secret = Get-AzKeyVaultSecret -VaultName $keyVaultName -SecretName $secretName -AsPlainText -ErrorAction Stop
     
     try {
         # Get AAD Token

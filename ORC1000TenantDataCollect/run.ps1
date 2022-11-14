@@ -31,23 +31,24 @@ function Find-ConfigurationTypeOfConfiguration {
         $cosmosDbContext
     )
     
-    if($configuration["@odata.type"]){
+    if ($configuration["@odata.type"]) {
         # Write-Host ("oData Type: " + $configuration["@odata.type"])
         $configurationTypeName = $configuration["@odata.type"].replace("#microsoft.graph.", "");
-    } else {
+    }
+    else {
         # Graph Exceptions
         # Exception: Some resource do not contain a odata property (example: App Protection Policy)
         # we take the url, use the last part => resource identifier and remove the plural 's' if it exists
         $graphResourceUrlArray = $url.split('/');
         $configurationTypeName = $graphResourceUrlArray[$graphResourceUrlArray.length - 1];
         
-         # remove plurar s
+        # remove plurar s
         if ($configurationTypeName.Substring($configurationTypeName.length - 1) -eq "s") {
-            $configurationTypeName = $configurationTypeName.Substring(0,$configurationTypeName.length -1)
+            $configurationTypeName = $configurationTypeName.Substring(0, $configurationTypeName.length - 1)
         }
     }
 
-    if($configurationTypeName){
+    if ($configurationTypeName) {
         # Write-Host "found ConfigurationType Name $configurationTypeName"
 
         # Query ConfigurationType from Database
@@ -92,26 +93,27 @@ function Import-Configuration {
         # Get ConfigurationType Name
         $configurationType = Find-ConfigurationTypeOfConfiguration -configuration $configurationObjectFromGraph -url $url -cosmosDbContext $cosmosDbContext
         
-        if($configurationType.id){    
+        if ($configurationType.id) {    
             Write-Host "Found configurationType $($configurationType.name)"
 
             # Create Mainconfiguration Object in DB
-            $newConfigurationDbId = $([Guid]::NewGuid().ToString())
+            $newConfigurationDbId = Invoke-DurableActivity -FunctionName 'ACT3000GuidCreate'
             $newConfiguration = @{
-                id       = $newConfigurationDbId
-                configurationId = $configurationId 
-                tenant   = $tenantDbId
+                id                = $newConfigurationDbId
+                configurationId   = $configurationId 
+                tenant            = $tenantDbId
                 configurationType = $configurationType.id
             }
-            New-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'configuration' -DocumentBody ($newConfiguration | ConvertTo-Json) -PartitionKey $newConfigurationDbId    
-            $configurationDbId = $newConfigurationDbId  
-            
-        }  else{
+            # Create Configuration
+            Invoke-DurableActivity -FunctionName 'ACT1010ConfigurationCreate' -Input $newConfiguration
+            $configurationDbId = $newConfigurationDbId         
+        }
+        else {
             ### handle Import errors
             Write-Host "unable to proceed, no configurationType Name found"
             $importErrors += @{
-                error =  "no configurationType Name found"
-                config =  $configurationObjectFromGraph
+                error  = "no configurationType Name found"
+                config = $configurationObjectFromGraph
             }
             continue
         }
@@ -124,11 +126,12 @@ function Import-Configuration {
     $query = "SELECT * FROM configurationVersion c WHERE (c.configuration = '$configurationDbId')"
     $configurationVersions = Get-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'configurationVersion' -Query $query -QueryEnableCrossPartition $true
     $newestTimeStamp = ($configurationVersions | measure-object -Property _ts -maximum).maximum
+    
     # Filter deviceVersion, find highest timeStamp = newest configVersion
     $newestConfigurationVersionInDB = $configurationVersions | Where-Object { $_._ts -eq $newestTimeStamp }
     #Write-Host ($newestConfigurationVersionInDB | ConvertTo-Json)
 
-    if($newestConfigurationVersionInDB){
+    if ($newestConfigurationVersionInDB) {
         # Version Comparison
         # Not all configs can be compared the same
         # if the same version is already stored skp this element
@@ -151,29 +154,30 @@ function Import-Configuration {
             }
         } 
         $storeNewConfigurationVersion = $true
-    }else{
-            # no configuration version stored yet
-            Write-Host "No configuration version stored yet"
-            $storeNewConfigurationVersion = $true
+    }
+    else {
+        # no configuration version stored yet
+        Write-Host "No configuration version stored yet"
+        $storeNewConfigurationVersion = $true
     }
 
     # Add ConfigurationVersion  
-    if($storeNewConfigurationVersion -eq $true){
+    if ($storeNewConfigurationVersion -eq $true) {
         Write-Host "New Config Version found, add to database"
 
         $hashString = Get-HashFromString -string $configurationObjectFromGraphJSON
     
-        $newConfigurationVersionDbId = $([Guid]::NewGuid().ToString())
+        $newConfigurationVersionDbId = Invoke-DurableActivity -FunctionName 'ACT3000GuidCreate'
         $newConfigurationVersion = @{
-            id = $newConfigurationVersionDbId
-            graphVersion = $configurationObjectFromGraph.version
-            displayName =  $configurationObjectFromGraph.displayName
-            graphModifiedAt =  $configurationObjectFromGraph.lastModifiedDateTime
-            value =  $configurationObjectFromGraphJSON
-            version = $hashString
-            configuration = $configurationDbId
+            id              = $newConfigurationVersionDbId
+            graphVersion    = $configurationObjectFromGraph.version
+            displayName     = $configurationObjectFromGraph.displayName
+            graphModifiedAt = $configurationObjectFromGraph.lastModifiedDateTime
+            value           = $configurationObjectFromGraphJSON
+            version         = $hashString
+            configuration   = $configurationDbId
         }
-        New-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'configurationVersion' -DocumentBody ($newConfigurationVersion | ConvertTo-Json) -PartitionKey $newConfigurationVersionDbId        
+        Invoke-DurableActivity -FunctionName 'ACT1020ConfigurationVersionCreate' -Input $newConfigurationVersion
     }
     else {
         Write-Host "Newest Configuration Version already stored"
@@ -206,13 +210,13 @@ function Import-Device {
         Write-Host "New Device found $deviceId"
 
         # Create Main Device Object in DB
-        $newDeviceDbId = $([Guid]::NewGuid().ToString())
+        $newDeviceDbId = Invoke-DurableActivity -FunctionName 'ACT3000GuidCreate'
         $newDevice = @{
             id       = $newDeviceDbId
             deviceId = $deviceId
             tenant   = $tenantDbId
         }
-        New-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'device' -DocumentBody ($newDevice | ConvertTo-Json) -PartitionKey $newDeviceDbId      
+        Invoke-DurableActivity -FunctionName 'ACT1030DeviceCreate' -Input $newDevice 
         $deviceDbId = $newDeviceDbId
     }
     else {
@@ -229,7 +233,7 @@ function Import-Device {
     
     # Sort Properties to the Hash Values can be generated all the time with the same property order
     # Todo: Doenst seem to work all the time, fix in the future
-    $deviceObjectFromGraphJSON  = $deviceObjectFromGraphJSON | Select-Object ($deviceObjectFromGraphJSON | Get-Member -MemberType NoteProperty).Name | ConvertTo-Json
+    $deviceObjectFromGraphJSON = $deviceObjectFromGraphJSON | Select-Object ($deviceObjectFromGraphJSON | Get-Member -MemberType NoteProperty).Name | ConvertTo-Json
     
     # Calcuate hash
     $hash = [System.Security.Cryptography.HashAlgorithm]::Create("sha1").ComputeHash([System.Text.Encoding]::UTF8.GetBytes($deviceObjectFromGraphJSON))
@@ -253,20 +257,20 @@ function Import-Device {
 
     if ($storeNewdeviceVersion -eq $true) {
         Write-Host "Newer Device Version found"
-        $newDeviceVersionDbId = $([Guid]::NewGuid().ToString())
+        $newDeviceVersionDbId = Invoke-DurableActivity -FunctionName 'ACT3000GuidCreate'
         
         $newDeviceVersion = @{
-            id           = $newDeviceVersionDbId
-            device       = $deviceDbId
-            version      = $hashString
-            value        = $deviceObjectFromGraphJSON
-            deviceName   = $deviceObjectFromGraph.deviceName
-            manufacturer = $deviceObjectFromGraph.manufacturer ? $deviceObjectFromGraph.manufacturer : ''
-            operatingSystem = $deviceObjectFromGraph.operatingSystem ? $deviceObjectFromGraph.operatingSystem : ''
-            osVersion = $deviceObjectFromGraph.osVersion ? $deviceObjectFromGraph.osVersion : ''
-            upn = $deviceObjectFromGraph.userPrincipalName ? $deviceObjectFromGraph.userPrincipalName : ''
+            id              = $newDeviceVersionDbId
+            device          = $deviceDbId
+            version         = $hashString
+            value           = $deviceObjectFromGraphJSON
+            deviceName      = $deviceObjectFromGraph.deviceName
+            manufacturer    = if ($deviceObjectFromGraph.manufacturer) { $deviceObjectFromGraph.manufacturer } else { '' }
+            operatingSystem = if ($deviceObjectFromGraph.operatingSystem) { $deviceObjectFromGraph.operatingSystem } else { '' }
+            osVersion       = if ($deviceObjectFromGraph.osVersion) { $deviceObjectFromGraph.osVersion } else { '' }
+            upn             = if ($deviceObjectFromGraph.userPrincipalName) { $deviceObjectFromGraph.userPrincipalName } else { '' }
         }
-        New-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'deviceVersion' -DocumentBody ($newDeviceVersion | ConvertTo-Json) -PartitionKey $newDeviceVersionDbId      
+        Invoke-DurableActivity -FunctionName 'ACT1040DeviceVersionCreate' -Input $newDeviceVersion
     }
     else {
         Write-Host "Newest Version already stored"
@@ -275,7 +279,7 @@ function Import-Device {
     #############################
     # Cleanup, old deviceVersions
     #############################           
-    $dateTime = (Get-Date).ToUniversalTime()
+    $dateTime = ($Context.CurrentUtcDateTime).ToUniversalTime()
     $unixTimeStamp = [System.Math]::Truncate((Get-Date -Date $DateTime -UFormat %s))
 
     # Calculate Threshold from before all versions should be deleted  
@@ -284,32 +288,45 @@ function Import-Device {
     Write-Host "Cleanup, device: $deviceDbId has $($deviceVersionsToCleanup.length) deviceVersions to clean" 
     
     # Remove old docs
-    foreach( $deviceVersionToCleanup in  $deviceVersionsToCleanup){
+    foreach ( $deviceVersionToCleanup in  $deviceVersionsToCleanup) {
         Remove-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'deviceVersion' -Id $deviceVersionToCleanup.id -PartitionKey $deviceVersionToCleanup.id   
         Write-Host "Remove deviceVersion $($deviceVersionToCleanup.id)" 
     }
 }
+
+###################################
+# Get Tenant Data
+###################################
+
+# Get all Tenants
+$query = "SELECT * FROM tenant c WHERE (c.tenantId = '$($tenantId)')"
+$tenant = Get-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'tenant' -Query $query -QueryEnableCrossPartition $true -MaxItemCount 1
+if (!$tenant.id) { Write-Host "unable to find tenant in database"; Write-Host $output; exit; } else { Write-Host "found tenant $($tenant.name)" }
 
 
 ###################################
 # Create Job element
 ###################################
 
-$jobId = $([Guid]::NewGuid().ToString())
+$jobId = Invoke-DurableActivity -FunctionName 'ACT3000GuidCreate'
+$updatedAt = ($Context.CurrentUtcDateTime).ToUniversalTime()
+
 $jobData = @"
 {
     "id": `"$jobId`",
     "type":  "TENENAT_REFRESH",
     "state":  "STARTED",
-    "tenant":  `"$tenantId`"
+    "tenant":  `"$($tenant.id)`",
+    "log": [],
+    "updatedAt": `"$updatedAt`"
 }
 "@
-$job = New-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'job' -DocumentBody $jobData -PartitionKey $jobId   
 
-# Get all Tenants
-$query = "SELECT * FROM tenant c WHERE (c.tenantId = '$($tenantId)')"
-$tenant = Get-CosmosDbDocument -Context $cosmosDbContext -CollectionId 'tenant' -Query $query -QueryEnableCrossPartition $true -MaxItemCount 1
-if (!$tenant.id) { Write-Host "unable to find tenant in database"; return $output } else { Write-Host "found tenant $($tenant.name)" }
+$job = Invoke-DurableActivity -FunctionName 'ACT1000JobCreate' -Input $jobData
+
+###################################
+# Create Access Token
+###################################
 
 # Build payload 
 $payloadToken = [PSCustomObject]@{
@@ -319,7 +336,7 @@ $payloadToken = [PSCustomObject]@{
 
 # get access token for tenant
 $accessTokenObject = Invoke-DurableActivity -FunctionName 'ACT2000MsGraphAccessTokenCreate' -Input $payloadToken
-if (!$accessTokenObject) { Write-Host "unable to get token", return $output } else { Write-Host "token generated" }
+if (!$accessTokenObject) { Write-Host "unable to get token"; exit } else { Write-Host "token generated" }
 
 ###################################
 # Get Graph Data
@@ -345,7 +362,9 @@ foreach ($msGraphResource in $msGraphResources) {
     $parallelTasks += Invoke-DurableActivity -FunctionName 'ACT2001MsGraphGet' -Input $payloadGetGraphData -NoWait
 }
 
-$graphResults = Wait-ActivityFunction -Task $parallelTasks
+if ($parallelTasks.Count -gt 0) {
+    $graphResults = Wait-ActivityFunction -Task $parallelTasks
+}
 Write-Host "Completed Initial Data gathering"
 
 #Write-Host ($graphResults| ConvertTo-Json)
@@ -361,22 +380,24 @@ Write-Host "Completed Initial Data gathering"
 $parallelTasksDeepResolve = @()
 
 foreach ($graphResult in $graphResults) {
-    foreach($graphItem in $graphResult.result){
+    foreach ($graphItem in $graphResult.result) {
         $graphItemUrl = "$($graphResult.resourceUrl)/$($graphItem.id)"
 
         # Get Data from Graph
         $payloadGetGraphData = [PSCustomObject]@{
-            'url'         = $graphItemUrl
-            'resourceUrl' = $graphResult.resourceUrl
-            'accessToken' = $accessTokenObject.access_token
-            'tokenType'   = $accessTokenObject.token_type
-            'expandAttributes' =  ($msGraphResource.expandAttributes | ConvertTo-Json)
+            'url'              = $graphItemUrl
+            'resourceUrl'      = $graphResult.resourceUrl
+            'accessToken'      = $accessTokenObject.access_token
+            'tokenType'        = $accessTokenObject.token_type
+            'expandAttributes' = ($msGraphResource.expandAttributes | ConvertTo-Json)
         }
         $parallelTasksDeepResolve += Invoke-DurableActivity -FunctionName 'ACT2001MsGraphGet' -Input $payloadGetGraphData -NoWait
     }
 }
 
-$graphResultsDeepResolve = Wait-ActivityFunction -Task $parallelTasksDeepResolve
+if ($parallelTasksDeepResolve.Count -gt 0) {
+    $graphResultsDeepResolve = Wait-ActivityFunction -Task $parallelTasksDeepResolve
+}
 Write-Host "Completed Deep Resolve"
 
 # Write-Host ($graphResults | ConvertTo-Json)
@@ -393,7 +414,7 @@ foreach ($graphResult in $graphResultsDeepResolve) {
         }
         Default {
             $importErrors = Import-Configuration -configuration $graphResult.Result -tenantDbId $tenant.id -cosmosDbContext $cosmosDbContext -url $graphResult.ResourceUrl
-            if($importErrors.length -gt 0){
+            if ($importErrors.length -gt 0) {
                 Write-Host ($importErrors | ConvertTo-Json)
             }
             Break
